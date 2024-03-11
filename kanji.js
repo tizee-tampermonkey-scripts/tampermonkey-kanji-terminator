@@ -9,12 +9,31 @@
 // @match       *://*/*
 // @grant       GM_xmlhttpRequest
 // @grant       GM_addStyle
+// @grant       GM_setValue
+// @grant       GM_getValue
 // @version     2024.03.01
 // ==/UserScript==
 
 let doc = document;
 let queue = {}; // Kanji queue to be converted
-let cachedKanji = {};
+let cachedKanji = loadCacheKanji();
+// load cached values
+function loadCacheKanji() {
+  let cacheStr = GM_getValue("kanji-terminator-caches", null);
+  if (cacheStr) {
+    return JSON.parse(cacheStr);
+  }
+  return {};
+}
+
+function saveCacheKanji(cache) {
+  if (cache.keys().length >= 500) {
+    GM_setValue("kanji-terminator-caches", {});
+    return;
+  }
+  let cacheStr = JSON.stringify(cache);
+  GM_setValue("kanji-terminator-caches", cacheStr);
+}
 
 let currentTime = undefined;
 
@@ -24,7 +43,13 @@ function getElapsedTime() {
 
 function scanTextNodes(node) {
   // Ignore text boxes and echoes
-  let excludeTags = {ruby: true, script: true, select: true, textarea: true, input: true};
+  let excludeTags = {
+    ruby: true,
+    script: true,
+    select: true,
+    textarea: true,
+    input: true,
+  };
 
   let currentLevel = [node];
   while (currentLevel.length > 0) {
@@ -36,7 +61,10 @@ function scanTextNodes(node) {
     let text_node = cur_node;
     switch (cur_node.nodeType) {
       case Node.ELEMENT_NODE:
-        if (cur_node.tagName.toLowerCase() in excludeTags || cur_node.isContentEditable) {
+        if (
+          cur_node.tagName.toLowerCase() in excludeTags ||
+          cur_node.isContentEditable
+        ) {
           continue;
         }
         cur_node.childNodes.forEach((val, idx, arr) => {
@@ -59,15 +87,13 @@ function mutationHandler(mutationList) {
   throttled_kanjiToHiragana();
 }
 
-
 function main() {
   GM_addStyle("rt.kanji-terminator-rt::before { content: attr(data-rt); }");
   let ob = new MutationObserver(mutationHandler);
   ob.observe(doc.body, {
     childList: true,
-    subtree: true
+    subtree: true,
   });
-  currentTime = Date.now();
 
   scanTextNodes(doc.body);
 }
@@ -85,10 +111,10 @@ function addRuby(node) {
     return false;
   }
   // <span>漢字</span> -> <span><ruby>漢字<rt class="kanji-terminator-rt" data-rt="かんじ"></rt></ruby></span>
-  let ruby = doc.createElement('ruby');
+  let ruby = doc.createElement("ruby");
   ruby.appendChild(doc.createTextNode(match[0]));
-  let rt = doc.createElement('rt');
-  rt.classList.add('kanji-terminator-rt');
+  let rt = doc.createElement("rt");
+  rt.classList.add("kanji-terminator-rt");
   ruby.appendChild(rt);
 
   // pending for conversion from Kanji to Hiragana
@@ -111,6 +137,8 @@ async function kanjiToHiragana() {
   let chunkSize = 200;
   let requestCount = 0;
   let kanjiCount = 0;
+  currentTime = Date.now();
+
   for (let kanji in queue) {
     kanjiCount++;
     if (kanji in cachedKanji) {
@@ -131,31 +159,40 @@ async function kanjiToHiragana() {
   }
 
   if (kanjiCount) {
-    console.debug(getElapsedTime() / 1000, 's Kanji Terminator:', kanjiCount, 'Kanji converted in', requestCount, 'requests, frame', window.location.href);
+    console.debug(
+      getElapsedTime(),
+      "ms Kanji Terminator:",
+      kanjiCount,
+      "Kanji converted in",
+      requestCount,
+      "requests, frame",
+      window.location.href
+    );
   }
+  saveCacheKanji(cachedKanji);
 }
 
 const API = "http://localhost:2024/";
 function toHiragana(kanjis) {
   GM_xmlhttpRequest({
     method: "GET",
-    url: API + encodeURIComponent(kanjis.join('\n')),
+    url: API + encodeURIComponent(kanjis.join("\n")),
     onload: function (resp) {
       /*
-        * data: result / error message
-        * */
+       * data: result / error message
+       * */
       console.log(resp.responseText);
       if (resp.responseText) {
         let json = JSON.parse(resp.responseText);
-        json.data.split('\n').forEach((kanji, idx, arr) => {
+        json.data.split("\n").forEach((kanji, idx, arr) => {
           cachedKanji[kanjis[idx]] = kanji;
           updateRubyFromCached(kanjis[idx]);
-        })
+        });
       } else {
         // invalid kanji
         console.error("Kanji Terminator: error for kanjis", kanjis);
       }
-    }
+    },
   });
 }
 
@@ -165,7 +202,7 @@ function updateRubyFromCached(kanji) {
   }
   (queue[kanji] || []).forEach(function (node) {
     node.dataset.rt = cachedKanji[kanji];
-  })
+  });
   delete queue[kanji];
 }
 
