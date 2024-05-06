@@ -88,6 +88,9 @@ function mutationHandler(mutationList) {
 }
 
 function main() {
+  if (doc.documentElement.lang !== "ja") {
+    return;
+  }
   GM_addStyle("rt.kanji-terminator-rt::before { content: attr(data-rt); }");
   let ob = new MutationObserver(mutationHandler);
   ob.observe(doc.body, {
